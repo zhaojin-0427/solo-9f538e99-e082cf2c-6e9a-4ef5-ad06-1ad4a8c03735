@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>封闭池塘标记重捕估算</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+         margin: 0 auto; max-width: 1080px; padding: 16px 24px 64px; color: #1f2933; }
+  h1 { font-size: 1.5rem; } h2 { font-size: 1.15rem; margin-bottom: 8px; }
+  section, .card { border: 1px solid #d9e2ec; border-radius: 8px;
+                   padding: 16px 20px; margin: 16px 0; background: #fff; }
+  table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+  th, td { border: 1px solid #d9e2ec; padding: 5px 10px; font-size: .9rem;
+           text-align: left; }
+  th { background: #f0f4f8; }
+  .msg { border-radius: 6px; padding: 10px 14px; margin: 10px 0; font-size: .95rem; }
+  .msg.ok { background: #e3f2e9; border: 1px solid #7bc796; }
+  .msg.error, .hall { background: #fdecea; border: 1px solid #f0a9a0; }
+  .hall { border-radius: 8px; padding: 14px 18px; margin: 16px 0; }
+  .est-num { font-size: 1.2rem; font-weight: 700; }
+  .na { color: #b3261e; font-weight: 700; }
+  form.inline { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  input[type=text] { width: 180px; padding: 4px 6px; }
+  select, button { padding: 4px 8px; }
+  button { cursor: pointer; border: 1px solid #9fb3c8; border-radius: 5px;
+           background: #f0f4f8; }
+  button:hover { background: #d9e2ec; }
+  details { margin: 8px 0; }
+  summary { cursor: pointer; color: #334e68; }
+  .hint { color: #627d98; font-size: .85rem; }
+  label.file { display: block; margin: 8px 0; }
+  .ver { font-weight: 700; color: #334e68; }
+</style>
+</head>
+<body>
+<h1>封闭池塘两轮抽样 · 标记重捕估算</h1>
+<p class="hint">配对规则：有标必配、无标不配、看不清可配可不配、每个首轮标记只用一次。
+估算公式：N = 首轮条数 × 次轮条数 ÷ 重捕数。</p>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for cat, msg in messages %}<div class="msg {{ cat }}">{{ msg }}</div>{% endfor %}
+{% endwith %}
+{% if error %}<div class="msg error">{{ error }}</div>{% endif %}
+
+{% if hall %}
+<div class="hall">
+  <h2>无可行配对（霍尔定理证书）</h2>
+  <p>以下 <b>{{ hall.sample_count }}</b> 个有标样本，其不同候选号并集一共只有
+     <b>{{ hall.union_count }}</b> 个（{{ hall.union_count }} &lt;
+     {{ hall.sample_count }}）：候选号少于样本数，不可能让每个有标样本各配一个
+     不重复的首轮标记，故无解。</p>
+  <table>
+    <tr><th>有标样本号</th><th>其候选标记号</th></tr>
+    {% for s in hall.samples %}
+    <tr>
+      <td>{{ s.sample_no }}</td>
+      <td>{{ s.candidates | join('、') if s.candidates else '（无候选号）' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p>候选号并集（共 {{ hall.union_count }} 个）：
+     {{ hall.union | join('、') if hall.union else '（空）' }}</p>
+</div>
+{% endif %}
+
+<section>
+  <h2>1. 上传两轮抽样 CSV</h2>
+  <form method="post" action="{{ url_for('upload') }}" enctype="multipart/form-data">
+    <label class="file">首轮 CSV（表头 <code>tag</code>，每行一个唯一标记号，1~300 条）：
+      <input type="file" name="round1_file" accept=".csv" required></label>
+    <label class="file">次轮 CSV（表头 <code>sample_no,status,candidates</code>；状态填
+      有标/无标/看不清；候选号来自首轮、用 ; 分隔，1~300 条）：
+      <input type="file" name="round2_file" accept=".csv" required></label>
+    <button type="submit">上传并估算</button>
+    <span class="hint">上传将整体替换现有数据；若无解或写入失败，自动保留上次记录与估算。</span>
+  </form>
+</section>
+
+{% if est %}
+<section>
+  <h2>2. 当前估算</h2>
+  <p>首轮 <b>{{ est.n1 }}</b> 条 · 次轮 <b>{{ est.n2 }}</b> 条 ·
+     保存于 {{ est.updated_at }}</p>
+  <table>
+    <tr><th></th><th>重捕数 m</th><th>鱼数估算 N = n1×n2÷m</th></tr>
+    <tr>
+      <td>最少重捕（仅必配的有标）</td>
+      <td>{{ est.min_recap }}</td>
+      <td class="est-num">
+        {% if est.est_high is none %}<span class="na">不可估</span>（重捕数为 0）
+        {% else %}{{ '%.1f' | format(est.est_high) }}{% endif %}
+      </td>
+    </tr>
+    <tr>
+      <td>最多重捕（含可配的看不清）</td>
+      <td>{{ est.max_recap }}</td>
+      <td class="est-num">
+        {% if est.est_low is none %}<span class="na">不可估</span>（重捕数为 0）
+        {% else %}{{ '%.1f' | format(est.est_low) }}{% endif %}
+      </td>
+    </tr>
+  </table>
+  <p>鱼数估算区间：
+    <span class="est-num">
+      {% if est.est_low is none %}不可估{% else %}{{ '%.1f' | format(est.est_low) }}{% endif %}
+      ～
+      {% if est.est_high is none %}不可估{% else %}{{ '%.1f' | format(est.est_high) }}{% endif %}
+    </span>
+  </p>
+  <details>
+    <summary>最少重捕的一套配对（{{ est.min_recap }} 对）</summary>
+    <table>
+      <tr><th>次轮样本号</th><th>配到的首轮标记号</th></tr>
+      {% for p in est.min_matching %}
+      <tr><td>{{ p.sample_no }}</td><td>{{ p.tag }}</td></tr>
+      {% endfor %}
+    </table>
+  </details>
+  <details>
+    <summary>最多重捕的一套配对（{{ est.max_recap }} 对）</summary>
+    <table>
+      <tr><th>次轮样本号</th><th>配到的首轮标记号</th></tr>
+      {% for p in est.max_matching %}
+      <tr><td>{{ p.sample_no }}</td><td>{{ p.tag }}</td></tr>
+      {% endfor %}
+    </table>
+  </details>
+</section>
+{% else %}
+<section><h2>2. 当前估算</h2><p>暂无估算，请先上传两轮 CSV。</p></section>
+{% endif %}
+
+{% if records %}
+<section>
+  <h2>3. 次轮记录（共 {{ records | length }} 条）与逐条更正</h2>
+  <p class="hint">每条记录按<b>所见版号</b>提交更正；若提交时版号已变化（过期）、
+     更正后无解或写入失败，本次更正不生效，保留上次记录与估算。</p>
+  <table>
+    <tr>
+      <th>样本号</th><th>状态</th><th>候选标记号</th><th>版号</th><th>更正为</th>
+    </tr>
+    {% for r in records %}
+    <tr>
+      <td>{{ r.sample_no }}</td>
+      <td>{{ r.status }}</td>
+      <td>{{ r.candidates | join('、') if r.candidates else '—' }}</td>
+      <td class="ver">{{ r.version }}</td>
+      <td>
+        <form class="inline" method="post" action="{{ url_for('correct') }}">
+          <input type="hidden" name="sample_no" value="{{ r.sample_no }}">
+          <input type="hidden" name="version" value="{{ r.version }}">
+          <select name="status">
+            {% for s in statuses %}
+            <option value="{{ s }}" {% if s == r.status %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+          </select>
+          <input type="text" name="candidates"
+                 value="{{ r.candidates | join(';') }}" placeholder="候选号，;分隔">
+          <button type="submit">更正</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endif %}
+
+{% if tags %}
+<details>
+  <summary>首轮标记号（共 {{ tags | length }} 个）</summary>
+  <p>{{ tags | join('、') }}</p>
+</details>
+{% endif %}
+
+</body>
+</html>

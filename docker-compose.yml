@@ -1,0 +1,19 @@
+name: markrecap
+
+services:
+  web:
+    build: .
+    image: markrecap:latest
+    ports:
+      - "8000:8000"
+    environment:
+      # SQLite 数据库文件位置（挂载卷内，重启后记录与估算仍可查看）
+      DB_PATH: /data/markrecap.db
+      # 生产环境请修改
+      SECRET_KEY: please-change-me
+    volumes:
+      - appdata:/data
+    restart: unless-stopped
+
+volumes:
+  appdata:
